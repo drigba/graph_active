@@ -4,67 +4,73 @@ import torch.nn.functional as F
 from sklearn.metrics import roc_auc_score
 
 
-# COMBINE????
-class GCN_with_linear(torch.nn.Module):
-    def __init__(self, num_features,num_classes):
-        super(GCN_with_linear, self).__init__()
-        self.conv1 = GCNConv(num_features, 16)
-        self.conv2 = GCNConv(16, 16)
-        self.linear = torch.nn.Linear(16, num_classes)
+
+class BaseGCN(torch.nn.Module):
+    def __init__(self, convs, projection_head= torch.nn.Identity()):
+        super(BaseGCN, self).__init__()
+        
+        if isinstance(convs, torch.nn.ModuleList):
+            self.convs = convs
+        elif isinstance(convs, list):
+            self.convs = torch.nn.ModuleList()
+            for conv in convs:
+                self.convs.append(conv)
+        elif isinstance(convs, torch.nn.Module):
+            self.convs = torch.nn.ModuleList([convs])
+            
+        self.projection_head = projection_head
         
     def get_latent(self,data):
         x, edge_index = data.x, data.edge_index
-        x = self.conv1(x, edge_index)
-        x = F.relu(x)
-        x = F.dropout(x, training=self.training)
-        x = self.conv2(x, edge_index)
+        
+        x = self.convs[0](x, edge_index)
+        if len(self.convs) > 1:
+            for conv in self.convs[1:]:
+                x = F.relu(x)
+                x = F.dropout(x, training=self.training)
+                x = conv(x, edge_index)
+        
         return x
     
-    def predict_from_latent(self,x):
-        x = F.relu(x)
-        x = self.linear(x)
-        return F.log_softmax(x, dim=1) 
-
+    def project(self,x):
+        x = self.projection_head(x)
+        return x
+        
     def forward(self, data):
         x = self.get_latent(data)
-        return self.predict_from_latent(x)
-    
-class GCN_Contrastive(torch.nn.Module):
+        return self.project(x)
+      
+        
+class GCNWithProjection(BaseGCN):
     def __init__(self, num_features,num_classes):
-        super(GCN_Contrastive, self).__init__()
-        self.conv1 = GCNConv(num_features, 128)
-        self.conv2 = GCNConv(128, 64)
-        self.projection = torch.nn.Sequential(
+        conv1 = GCNConv(num_features, 16)
+        conv2 = GCNConv(16, 16)
+        linear = torch.nn.Linear(16, num_classes)
+        super(GCNWithProjection, self).__init__([conv1,conv2], linear) 
+    
+class GCNContrastive(BaseGCN):
+    def __init__(self, num_features):
+        conv1 = GCNConv(num_features, 128)
+        conv2 = GCNConv(128, 64)
+        projection = torch.nn.Sequential(
             torch.nn.Linear(64, 32),
             torch.nn.ReLU(),
             torch.nn.Linear(32, 16)
         )
-
-    def forward(self, data):
-        x, edge_index = data.x, data.edge_index
-        x = self.conv1(x, edge_index)
-        x = F.relu(x)
-        x = F.dropout(x, training=self.training)
-        x = self.conv2(x, edge_index)
-        x = F.relu(x)
-        x = self.projection(x)
-        return x
+        super(GCNContrastive, self).__init__([conv1,conv2], projection)
     
-    
+class GCNContrastiveMini(BaseGCN):
+    def __init__(self, num_features):
+        conv1 = GCNConv(num_features, 64)
+        conv2 = GCNConv(64, 2)
+        super(GCNContrastiveMini, self).__init__([conv1,conv2])
 
-class GCN(torch.nn.Module):
+class GCN(BaseGCN):
     def __init__(self, num_features,num_classes):
-        super(GCN, self).__init__()
-        self.conv1 = GCNConv(num_features, 16)
-        self.conv2 = GCNConv(16, num_classes)
+        conv1 = GCNConv(num_features, 16)
+        conv2 = GCNConv(16, num_classes)
+        super(GCN, self).__init__([conv1,conv2])
 
-    def forward(self, data):
-        x, edge_index = data.x, data.edge_index
-        x = self.conv1(x, edge_index)
-        x = F.relu(x)
-        x = F.dropout(x, training=self.training)
-        x = self.conv2(x, edge_index)
-        return F.log_softmax(x, dim=1)
     
 
         

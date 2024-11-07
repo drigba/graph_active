@@ -3,7 +3,8 @@ from util import *
 import random
 from scipy.stats import mode
 import torch_geometric.transforms as T 
-
+from sklearn.linear_model import LogisticRegression
+from torch_geometric.utils import to_dense_adj
 
 class QueryStrategy:
     def __call__(self,model,data, train_pool) -> Any:
@@ -67,6 +68,31 @@ class EntropyQuery(QueryStrategy):
     def __str__(self) -> str:
         return self.__class__.__name__
     
+class EntropyQueryContrastive(QueryStrategy):
+    def __init__(self):
+        super().__init__()
+        
+    def __call__(self,model,data, train_pool):
+        return self.entropy_query(model,data, train_pool)
+    
+    def entropy_query(self,model,data, train_pool):
+        model.eval()
+        out = model(data)
+        predictor = LogisticRegression()
+        train_mask = data.train_mask
+        predictor.fit(out[train_mask].cpu().detach().numpy(), data.y[train_mask].cpu().detach().numpy())
+        
+        pred_log_proba = torch.tensor(predictor.predict_log_proba(out.cpu().detach().numpy())).to(data.x.device)
+        
+        entropy = calculate_entropy(pred_log_proba)
+        pool_indices = get_mask_indices(train_pool)
+        chosen_node_ix = torch.argmax(entropy[pool_indices])
+        chosen_node = pool_indices[chosen_node_ix]
+        return chosen_node
+    
+    def __str__(self) -> str:
+        return self.__class__.__name__
+    
 class AugmentGraphModeQuery(AugmentedQueryStrategy):
 
     def __call__(self, model, data, train_pool) -> Any:
@@ -110,7 +136,73 @@ class AugmentGraphSumEntropyQuery(AugmentedQueryStrategy):
     
     def  __concat_params__(self,fn) -> str:
         return super().__concat_params__(fn) + f", original_weight={self.original_weight}"
+    
+class AugmentGraphSumEntropyQueryContrastive(AugmentedQueryStrategy):
+    def __init__(self,augmentation_fn, num_passes=10, original_weight = 0.0):
+        super().__init__(augmentation_fn, num_passes)
+        self.original_weight = original_weight
 
+        
+    def __call__(self,model,data, train_pool):
+        pool_indices = get_mask_indices(train_pool)
+        model.eval()
+        entropy_sum = torch.zeros(data.num_nodes).to(data.x.device)
+        
+        out = model(data)
+        predictor = LogisticRegression()
+        train_mask = data.train_mask
+        predictor.fit(out[train_mask].cpu().detach().numpy(), data.y[train_mask].cpu().detach().numpy())
+        
+        for _ in range(self.num_passes):
+            data_tmp = data.clone()
+            data_tmp = self.augmentation_fn(data_tmp)
+            out = model(data_tmp)
+            pred = torch.tensor(predictor.predict_log_proba(out.cpu().detach().numpy())).to(data.x.device)
+            
+            entropy = calculate_entropy(pred)
+            entropy_sum += entropy
+        entropy_sum /= self.num_passes
+        orig_out = model(data)
+        entropy = calculate_entropy(orig_out)
+        entropy_sum += self.original_weight * entropy
+            
+        chosen_node_ix = torch.argmax(entropy_sum[pool_indices])
+        chosen_node = pool_indices[chosen_node_ix]
+        
+        return chosen_node
+    
+    def  __concat_params__(self,fn) -> str:
+        return super().__concat_params__(fn) + f", original_weight={self.original_weight}"
+
+
+class ContrastiveMinMax(QueryStrategy):
+
+    def __call__(self,model,data, train_pool):
+        
+        pool_indices = get_mask_indices(train_pool)
+        model.eval()
+        out = model(data)
+        
+        dist = torch.cdist(out,out)
+        dense_adj = to_dense_adj(data.edge_index)
+        crit_matrix = dist * dense_adj
+        
+        max_crit = crit_matrix.max(dim=1).values[0]
+            
+        chosen_node_ix = torch.argmin(max_crit[pool_indices])
+        chosen_node = pool_indices[chosen_node_ix]
+        return chosen_node
+    
+    def __str__(self) -> str:
+        t = self.__concat_params__(str)
+        s = f"{self.__class__.__name__}"
+        return s
+    
+    def __repr__(self) -> str:
+        t = self.__concat_params__(repr)
+        s = f"{self.__class__.__name__}"
+        return s
+    
     
 
     

@@ -93,31 +93,3 @@ class NoiseLatent(BaseTransform):
 
 
 
-# class AddNoiseAll(Augmentation):
-#     def __init__(self, noise_level):
-#         self.noise_level = noise_level
-        
-
-#     def _augment(self, data):
-#         data.x = data.x + torch.randn_like(data.x) * self.noise_level
-#         return data
-        
-# class AddNoiseCol(Augmentation):
-#     def __init__(self, noise_level, noise_prob):
-#         self.noise_level = noise_level
-#         self.noise_prob = noise_prob
-        
-#     def _augment(self, data):
-#         noised_nodes_mask = torch.rand(data.x.shape[1]) < self.noise_prob
-#         data.x[:,noised_nodes_mask] = data.x[:,noised_nodes_mask] + torch.randn_like(data.x[:,noised_nodes_mask]) * self.noise_level
-#         return data
-    
-# class AddNoiseNode(Augmentation):
-#     def __init__(self, noise_level, noise_prob):
-#         self.noise_level = noise_level
-#         self.noise_prob = noise_prob
-    
-#     def _augment(self, data):
-#         noised_nodes_mask = torch.rand(data.x.shape[0]) < self.noise_prob
-#         data.x[noised_nodes_mask] = data.x[noised_nodes_mask] + torch.randn_like(data.x[noised_nodes_mask]) * self.noise_level
-#         return data

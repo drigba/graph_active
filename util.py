@@ -1,6 +1,7 @@
 import torch
-from torch_geometric.datasets import Planetoid
 import os
+import torch.nn.functional as F
+
 
 def calculate_entropy(log_softmax_output):
     # Convert log-softmax output to softmax probabilities
@@ -70,10 +71,8 @@ def generate_balanced_data_split(dataset, val_size, train_sample_per_class = 1, 
     val_mask[val_indices] = True
 
     train_pool = ~dataset.test_mask & ~val_mask
-    
     train_pool_indices = get_mask_indices(train_pool)
     train_mask = torch.zeros(data.num_nodes, dtype=torch.bool)
-    train_pool = torch.ones(data.num_nodes, dtype=torch.bool)
     y_pool = dataset.y[train_pool_indices]
     
     for i in range(num_classes):
@@ -81,7 +80,7 @@ def generate_balanced_data_split(dataset, val_size, train_sample_per_class = 1, 
         perm = torch.randperm(i_indices.shape[0], generator=generator)[train_sample_per_class]
         train_mask[train_pool_indices[i_indices[perm]]] = True
         train_pool[train_pool_indices[i_indices[perm]]] = False
-        
+
     return train_pool,train_mask, val_mask, test_mask
 
 def generate_balanced_data_splits(dataset, num_splits, path):
@@ -98,3 +97,58 @@ def generate_balanced_data_splits(dataset, num_splits, path):
             os.makedirs(path)
         torch.save(data_clone, full_path)
         
+
+def nt_xent_loss(x1,x2,t=1.0):
+    D, s_12, s_11, s_22 = sim_vectors(x1,x2,t)
+    
+    l1 = D / (D + s_12 + s_11)
+    loss1 = -torch.log(l1)
+    
+    l2 = D / (D + s_12 + s_22)
+    loss2 = -torch.log(l2)
+    
+    loss = (loss1 + loss2) / (2*len(x1))
+    loss = loss.sum()
+    return loss
+
+def sim_vectors(x1,x2, t=1.0):
+    sims_12 = tempered_cosine_similarity(x1,x2,t)
+    sims_11 = tempered_cosine_similarity(x1,x1,t)
+    sims_22 = tempered_cosine_similarity(x2,x2,t)
+    
+    D = torch.diag(sims_12,0)
+    s_12 = sims_12.sum(dim=1) - D
+    s_11 = sims_11.sum(dim=1) - torch.diag(sims_11,0)
+    s_22 = sims_22.sum(dim=1) - torch.diag(sims_22,0)
+    
+    return D, s_12, s_11, s_22
+
+
+    
+
+def tempered_cosine_similarity(x1,x2, t=1.0):
+    cos_sim = F.cosine_similarity(x1[None,:,:], x2[:,None,:], dim=-1)
+    cos_sim = torch.exp(cos_sim / t)
+    return cos_sim
+
+class InfoNCE():
+    def __init__(self, tau):
+        self.tau = tau
+
+    def compute(self, anchor, sample):
+        sim = _similarity(anchor, sample) / self.tau
+        exp_sim = torch.exp(sim)
+        log_prob = sim - torch.log(exp_sim.sum(dim=1, keepdim=True))
+        loss = log_prob
+        loss = loss.sum(dim=1)/anchor.size(0)
+        return -loss.mean()
+    
+    def __call__(self, anchor, sample) -> torch.FloatTensor:
+        loss = self.compute(anchor, sample)
+        return loss
+    
+
+def _similarity(h1: torch.Tensor, h2: torch.Tensor):
+    h1 = F.normalize(h1)
+    h2 = F.normalize(h2)
+    return h1 @ h2.t()
