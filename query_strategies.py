@@ -58,7 +58,7 @@ class EntropyQuery(QueryStrategy):
     
     def entropy_query(self,model,data, train_pool):
         model.eval()
-        out = model(data)
+        out = model.test_step(data)
         entropy = calculate_entropy(out)
         pool_indices = get_mask_indices(train_pool)
         chosen_node_ix = torch.argmax(entropy[pool_indices])
@@ -68,31 +68,7 @@ class EntropyQuery(QueryStrategy):
     def __str__(self) -> str:
         return self.__class__.__name__
     
-class EntropyQueryContrastive(QueryStrategy):
-    def __init__(self):
-        super().__init__()
-        
-    def __call__(self,model,data, train_pool):
-        return self.entropy_query(model,data, train_pool)
-    
-    def entropy_query(self,model,data, train_pool):
-        model.eval()
-        out = model(data)
-        predictor = LogisticRegression()
-        train_mask = data.train_mask
-        predictor.fit(out[train_mask].cpu().detach().numpy(), data.y[train_mask].cpu().detach().numpy())
-        
-        pred_log_proba = torch.tensor(predictor.predict_log_proba(out.cpu().detach().numpy())).to(data.x.device)
-        
-        entropy = calculate_entropy(pred_log_proba)
-        pool_indices = get_mask_indices(train_pool)
-        chosen_node_ix = torch.argmax(entropy[pool_indices])
-        chosen_node = pool_indices[chosen_node_ix]
-        return chosen_node
-    
-    def __str__(self) -> str:
-        return self.__class__.__name__
-    
+
 class AugmentGraphModeQuery(AugmentedQueryStrategy):
 
     def __call__(self, model, data, train_pool) -> Any:
@@ -121,11 +97,11 @@ class AugmentGraphSumEntropyQuery(AugmentedQueryStrategy):
         for _ in range(self.num_passes):
             data_tmp = data.clone()
             data_tmp = self.augmentation_fn(data_tmp)
-            out = model(data_tmp)
+            out = model.test_step(data_tmp)
             entropy = calculate_entropy(out)
             entropy_sum += entropy
         entropy_sum /= self.num_passes
-        orig_out = model(data)
+        orig_out = model.test_step(data)
         entropy = calculate_entropy(orig_out)
         entropy_sum += self.original_weight * entropy
             
@@ -137,42 +113,6 @@ class AugmentGraphSumEntropyQuery(AugmentedQueryStrategy):
     def  __concat_params__(self,fn) -> str:
         return super().__concat_params__(fn) + f", original_weight={self.original_weight}"
     
-class AugmentGraphSumEntropyQueryContrastive(AugmentedQueryStrategy):
-    def __init__(self,augmentation_fn, num_passes=10, original_weight = 0.0):
-        super().__init__(augmentation_fn, num_passes)
-        self.original_weight = original_weight
-
-        
-    def __call__(self,model,data, train_pool):
-        pool_indices = get_mask_indices(train_pool)
-        model.eval()
-        entropy_sum = torch.zeros(data.num_nodes).to(data.x.device)
-        
-        out = model(data)
-        predictor = LogisticRegression()
-        train_mask = data.train_mask
-        predictor.fit(out[train_mask].cpu().detach().numpy(), data.y[train_mask].cpu().detach().numpy())
-        
-        for _ in range(self.num_passes):
-            data_tmp = data.clone()
-            data_tmp = self.augmentation_fn(data_tmp)
-            out = model(data_tmp)
-            pred = torch.tensor(predictor.predict_log_proba(out.cpu().detach().numpy())).to(data.x.device)
-            
-            entropy = calculate_entropy(pred)
-            entropy_sum += entropy
-        entropy_sum /= self.num_passes
-        orig_out = model(data)
-        entropy = calculate_entropy(orig_out)
-        entropy_sum += self.original_weight * entropy
-            
-        chosen_node_ix = torch.argmax(entropy_sum[pool_indices])
-        chosen_node = pool_indices[chosen_node_ix]
-        
-        return chosen_node
-    
-    def  __concat_params__(self,fn) -> str:
-        return super().__concat_params__(fn) + f", original_weight={self.original_weight}"
 
 
 class ContrastiveMinMax(QueryStrategy):
@@ -215,14 +155,15 @@ class AugmentGraphLogitChange(AugmentedQueryStrategy):
     def __call__(self,model,data, train_pool):
         pool_indices = get_mask_indices(train_pool)
         model.eval()
-        out = torch.zeros_like(model(data))
+        orig_out = model.test_step(data)
+        out = torch.zeros_like(orig_out)
         for _ in range(self.num_passes):
             data_tmp = data.clone()
             data_tmp = self.augmentation_fn(data_tmp)
-            out += model(data_tmp)
+            out += model.test_step(data_tmp)
         out = out / self.num_passes
         
-        orig_out = model(data)
+        
         logit_change = out + self.original_weight * orig_out
         
         entropy = calculate_entropy(logit_change)
@@ -244,9 +185,9 @@ class AugmentGraphSumQueryLatent(AugmentedQueryStrategy):
         entropy_sum = torch.zeros(data.num_nodes).to(data.x.device)
 
         for _ in range(self.num_passes):
-            latent = model.get_latent(data)
+            latent = model.model.get_latent(data)
             latent_augmented = self.augmentation_fn(latent)
-            out = model.predict_from_latent(latent_augmented)
+            out = model.model.project(latent_augmented)
             entropy = calculate_entropy(out)
             entropy_sum += entropy
             

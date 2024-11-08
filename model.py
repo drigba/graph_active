@@ -1,7 +1,6 @@
 import torch
 from torch_geometric.nn import GCNConv
 import torch.nn.functional as F
-from sklearn.metrics import roc_auc_score
 
 
 
