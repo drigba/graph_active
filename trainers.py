@@ -1,10 +1,4 @@
-
-
-
-
 class Trainer():
-
-        
     def train(self,model, data, epochs):
         model.train()
         for _ in range(epochs):
@@ -12,6 +6,7 @@ class Trainer():
             loss = model.train_step(data)
             loss.backward()
             model.optimizer.step()
+            print(loss.item())  
     
     def test(self,model, data):
         model.eval()

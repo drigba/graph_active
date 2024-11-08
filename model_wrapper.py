@@ -4,7 +4,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.utils.validation import check_is_fitted
 
 class ModelWrapper(torch.nn.Module):
-    def __init__(self, model,optimizer, loss_fn):
+    def __init__(self, model,optimizer = None, loss_fn = None):
         super().__init__()
         self.model = model
         self.loss_fn = loss_fn
@@ -36,6 +36,7 @@ class ContrastiveModelWrapper(ModelWrapper):
         super().__init__(model,optimizer, loss_fn)
         self.predictor = LogisticRegression()
         self.augmentor = augmentor
+        self.fitted = False
         
     def train_step(self, data):
         data_tmp1 = data.clone()
@@ -53,14 +54,47 @@ class ContrastiveModelWrapper(ModelWrapper):
     def test_step(self, data):
         out = self.model(data)
         out = out.detach().cpu().numpy()
-        data = data.detach().cpu().numpy()
+        y = data.y.detach().cpu().numpy()
+        train_mask = data.train_mask.detach().cpu().numpy()
         
-        if not check_is_fitted(self.predictor):
-            self.predictor.fit(out[data.train_mask], data.y[data.train_mask])
+        
+        if not self.fitted:
+            self.predictor.fit(out[train_mask], y[train_mask])
+            self.fitted = True
             
-        pred_log_probas = torch.tensor(self.predictor.predict_log_proba(out)).to(data.device)
+        pred_log_probas = torch.tensor(self.predictor.predict_log_proba(out)).to(data.x.device)
         return pred_log_probas
     
 
     def reset_predictor(self):
         self.predictor = LogisticRegression()
+        self.fitted = False
+        
+# TODO: USE ONLY GRACE LOSS AND ENCODER
+class GRACEModelWrapper(ModelWrapper):
+    def __init__(self, model,optimizer):
+        super().__init__(model,optimizer,None)
+        self.predictor = LogisticRegression()
+        self.fitted = False
+
+    def train_step(self, data):
+        loss = self.model.train_step(data.x, data.edge_index)
+        return loss
+    
+    def test_step(self, data):
+        out = self.model(data.x, data.edge_index)
+        out = out.detach().cpu().numpy()
+        y = data.y.detach().cpu().numpy()
+        train_mask = data.train_mask.detach().cpu().numpy()
+        
+        
+        if not self.fitted:
+            self.predictor.fit(out[train_mask], y[train_mask])
+            self.fitted = True
+            
+        pred_log_probas = torch.tensor(self.predictor.predict_log_proba(out)).to(data.x.device)
+        return pred_log_probas
+    
+    def reset_predictor(self):
+        self.predictor = LogisticRegression()
+        self.fitted = False
