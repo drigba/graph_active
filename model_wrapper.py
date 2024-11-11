@@ -52,7 +52,7 @@ class ContrastiveModelWrapper(ModelWrapper):
         return loss
     
     def test_step(self, data):
-        out = self.model(data)
+        out = self(data)
         out = out.detach().cpu().numpy()
         y = data.y.detach().cpu().numpy()
         train_mask = data.train_mask.detach().cpu().numpy()
@@ -62,39 +62,31 @@ class ContrastiveModelWrapper(ModelWrapper):
             self.predictor.fit(out[train_mask], y[train_mask])
             self.fitted = True
             
-        pred_log_probas = torch.tensor(self.predictor.predict_log_proba(out)).to(data.x.device)
+        pred_log_probas = self.predict_log_proba(out)
+        pred_log_probas = torch.tensor(pred_log_probas).to(data.y.device)
         return pred_log_probas
     
+    def predict_log_proba(self,x):
+        pred = self.predictor.predict_log_proba(x)
+        return pred
+
 
     def reset_predictor(self):
         self.predictor = LogisticRegression()
         self.fitted = False
         
 # TODO: USE ONLY GRACE LOSS AND ENCODER
-class GRACEModelWrapper(ModelWrapper):
+class GRACEModelWrapper(ContrastiveModelWrapper):
     def __init__(self, model,optimizer):
-        super().__init__(model,optimizer,None)
-        self.predictor = LogisticRegression()
-        self.fitted = False
+        super().__init__(model,optimizer,None,None)
 
     def train_step(self, data):
         loss = self.model.train_step(data.x, data.edge_index)
         return loss
     
-    def test_step(self, data):
+    def forward(self, data):
         out = self.model(data.x, data.edge_index)
-        out = out.detach().cpu().numpy()
-        y = data.y.detach().cpu().numpy()
-        train_mask = data.train_mask.detach().cpu().numpy()
-        
-        
-        if not self.fitted:
-            self.predictor.fit(out[train_mask], y[train_mask])
-            self.fitted = True
-            
-        pred_log_probas = torch.tensor(self.predictor.predict_log_proba(out)).to(data.x.device)
-        return pred_log_probas
+        return out
     
-    def reset_predictor(self):
-        self.predictor = LogisticRegression()
-        self.fitted = False
+
+    

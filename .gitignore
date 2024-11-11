@@ -30,3 +30,4 @@ env/
 wandb/
 lightning_logs/
 data_splits/
+data/

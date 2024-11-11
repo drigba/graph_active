@@ -1,6 +1,7 @@
 import torch
 import os
 import torch.nn.functional as F
+import wandb
 
 
 def calculate_entropy(log_softmax_output):
@@ -152,3 +153,37 @@ def _similarity(h1: torch.Tensor, h2: torch.Tensor):
     h1 = F.normalize(h1)
     h2 = F.normalize(h2)
     return h1 @ h2.t()
+
+
+
+def init_wandb(query_strategy,run):
+  config={
+    "learning_rate": 0.01,
+    "architecture": "GCN",
+    "dataset": "CORA",
+    "epochs": 200,
+    "strategy": str(query_strategy)
+    }
+  
+  if hasattr(query_strategy, "augmentation_fn"):
+    augmentation = query_strategy.augmentation_fn
+    config["augmentations"] = []
+    if isinstance(augmentation, T.Compose):
+      transforms = augmentation.transforms
+    else:
+      transforms = [augmentation]
+      
+    for t in transforms:
+      aug_config = {}
+      aug_config["name"] = str(t)
+      aug_config["hyperparameters"] = t.__hyperparameters__()
+      config["augmentations"].append(aug_config)
+  
+  wandb.init(
+    # Set the project where this run will be logged
+    project="graph-active-learning",
+    # We pass a run name (otherwise it’ll be randomly assigned, like sunshine-lollypop-10)
+    name=f"{query_strategy}_{run}",
+    # Track hyperparameters and run metadata
+    config=config)
+  return config

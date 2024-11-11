@@ -6,13 +6,13 @@ class Trainer():
             loss = model.train_step(data)
             loss.backward()
             model.optimizer.step()
-            print(loss.item())  
     
     def test(self,model, data):
         model.eval()
         out = model.test_step(data)
         pred = out.argmax(dim=1)
         acc = self.calculate_accuracy(pred, data)
+        
         return acc
     
     def calculate_accuracy(self, pred, data):

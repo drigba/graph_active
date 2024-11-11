@@ -185,9 +185,11 @@ class AugmentGraphSumQueryLatent(AugmentedQueryStrategy):
         entropy_sum = torch.zeros(data.num_nodes).to(data.x.device)
 
         for _ in range(self.num_passes):
-            latent = model.model.get_latent(data)
+            latent = model(data)
             latent_augmented = self.augmentation_fn(latent)
-            out = model.model.project(latent_augmented)
+            latent_augmented = latent_augmented.detach().cpu().numpy()
+            out = model.predict_log_proba(latent_augmented)
+            out = torch.tensor(out).to(data.y.device)
             entropy = calculate_entropy(out)
             entropy_sum += entropy
             
