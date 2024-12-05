@@ -1,6 +1,7 @@
 import torch
 from torch_geometric.nn import GCNConv
 import torch.nn.functional as F
+from typing import Callable, List, Optional
 
 
 
@@ -71,6 +72,53 @@ class GCN(BaseGCN):
         super(GCN, self).__init__([conv1,conv2])
 
     
+class GRACEEncoder(torch.nn.Module):
+    """Implementation of the Encoder for GRACE"""
+
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        activation: Callable = F.relu,
+        base_model=GCNConv,
+        k: int = 2,
+    ) -> None:
+        """
+        Initialize the encoder module.
+
+        Args:
+            in_channels (int): Number of input channels.
+            out_channels (int): Number of output channels.
+            activation (Callable, optional): Activation function. Defaults to F.relu.
+            base_model (torch.nn.Module, optional): Base model. Defaults to GCNConv.
+            k (int, optional): Number of layers. Defaults to 2.
+        """
+        super(GRACEEncoder, self).__init__()
+        self.base_model = base_model
+
+        assert k >= 2, "k needs to be atleast 2"
+        self.k = k
+        self.conv = [base_model(in_channels, 2 * out_channels)]
+        for _ in range(1, k - 1):
+            self.conv.append(base_model(2 * out_channels, 2 * out_channels))
+        self.conv.append(base_model(2 * out_channels, out_channels))
+        self.conv = torch.nn.ModuleList(self.conv)  # type: ignore[assignment]
+        self.activation = activation
+
+    def forward(self, x: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
+        """
+        Compute a forward pass through the encoder module.
+
+        Args:
+            x (torch.Tensor): Node features.
+            edge_index (torch.Tensor): Edge indices.
+
+        Returns:
+            torch.Tensor: Representations from the encoder module.
+        """
+        for i in range(self.k):
+            x = self.activation(self.conv[i](x, edge_index))
+        return x
 
         
     

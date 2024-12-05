@@ -31,3 +31,4 @@ wandb/
 lightning_logs/
 data_splits/
 data/
+semi_sup_dyn_model.pth

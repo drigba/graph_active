@@ -2,7 +2,9 @@ import torch
 import os
 import torch.nn.functional as F
 import wandb
-
+import torch_geometric.transforms as T 
+from itertools import permutations
+import numpy as np
 
 def calculate_entropy(log_softmax_output):
     # Convert log-softmax output to softmax probabilities
@@ -156,9 +158,9 @@ def _similarity(h1: torch.Tensor, h2: torch.Tensor):
 
 
 
-def init_wandb(query_strategy,run):
+def init_wandb(query_strategy,run,dataset):
   config={
-    "learning_rate": 0.01,
+    "learning_rate": 0.001,
     "architecture": "GCN",
     "dataset": "CORA",
     "epochs": 200,
@@ -187,3 +189,89 @@ def init_wandb(query_strategy,run):
     # Track hyperparameters and run metadata
     config=config)
   return config
+
+
+def label_indices(dataset):
+    num_classes = dataset.y.max()+1
+    ti = get_mask_indices(dataset.train_mask)
+    d = {i: ti[dataset.y[dataset.train_mask].eq(i)] for i in range(num_classes)}
+    return d
+
+
+def drop_edge_weighted(edge_index, edge_weights, p: float, threshold: float = 1.):
+    edge_weights = edge_weights / edge_weights.mean() * p
+    edge_weights = edge_weights.where(edge_weights < threshold, torch.ones_like(edge_weights) * threshold)
+    sel_mask = torch.bernoulli(1. - edge_weights).to(torch.bool)
+
+    return edge_index[:, sel_mask]
+
+def drop_feature_weighted_2(x, w, p: float, threshold: float = 0.7):
+    w = w / w.mean() * p
+    w = w.where(w < threshold, torch.ones_like(w) * threshold)
+    drop_prob = w
+
+    drop_mask = torch.bernoulli(drop_prob).to(torch.bool)
+
+    x = x.clone()
+    x[:, drop_mask] = 0.
+
+    return x
+
+def noise_feature_weighted_2(x, w, p: float, threshold: float = 0.7):
+    w = w / w.mean() * p
+    w = w.where(w < threshold, torch.ones_like(w) * threshold)
+    # noise = torch.normal(0,w)
+    noise = torch.randn_like(x) * w
+
+    x = x.clone()
+    x = x + noise
+
+    return x,noise
+
+
+def pool_tuning(model, dataset):
+    with torch.no_grad():
+        model.eval()
+        out = model.test_step(dataset)
+        entropy = calculate_entropy(out)
+        entropy_filtered = entropy[dataset.train_pool]
+        selected_node = entropy_filtered.argmin()
+        dataset.train_mask[selected_node] = True
+        # dataset.train_pool[selected_rows] = False
+        dataset.y_train[selected_node] = out.argmax(dim=1)[selected_node]
+    return dataset 
+
+
+def map_labels(true_labels, pred_labels):
+    unique_labels = np.unique(true_labels)
+    perm = permutations(unique_labels)
+    best_accuracy = 0
+    best_mapping = None
+    
+    for p in perm:
+        mapping = {old: new for old, new in zip(unique_labels, p)}
+        mapped_labels = np.vectorize(mapping.get)(pred_labels)
+        accuracy = np.mean(mapped_labels == true_labels)
+        
+        if accuracy > best_accuracy:
+            best_accuracy = accuracy
+            best_mapping = mapping
+    
+    return best_mapping, best_accuracy
+
+
+def label_indices2(dataset,mask):
+    num_classes = dataset.y.max()+1
+    ti = get_mask_indices(mask)
+    d = {i: ti[dataset.y[mask].eq(i)] for i in range(num_classes)}
+    return d
+
+def init_kmeans(dataset,mask,out):
+    li = label_indices2(dataset,mask)
+    cc = []
+    for l in li.values():
+        l = l.cpu().numpy()
+        cc.append(np.mean(out[l],axis=0))
+
+    cc = np.array(cc)
+    return cc

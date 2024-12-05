@@ -1,3 +1,4 @@
+import torch
 class Trainer():
     def train(self,model, data, epochs):
         model.train()
@@ -8,11 +9,11 @@ class Trainer():
             model.optimizer.step()
     
     def test(self,model, data):
-        model.eval()
-        out = model.test_step(data)
-        pred = out.argmax(dim=1)
-        acc = self.calculate_accuracy(pred, data)
-        
+        with torch.no_grad():
+            model.eval()
+            out = model.test_step(data)
+            pred = out.argmax(dim=1)
+            acc = self.calculate_accuracy(pred, data)
         return acc
     
     def calculate_accuracy(self, pred, data):
