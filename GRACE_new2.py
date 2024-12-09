@@ -30,10 +30,14 @@ class GRACENew2(torch.nn.Module):
 
     def __init__(
         self,
-        encoder_module: torch.nn.Module,
-        projection_head: torch.nn.Module,
+        num_features: int,
+        hidden: int,
+        num_layers: int,
         augmentor1: BaseTransform,
         augmentor2: BaseTransform,
+        activation: Callable = F.relu,
+        base_model: torch.nn.Module = GCNConv,
+        projection_dim: int = 128,
         tau: Optional[float] = 0.5,
         lambda_: Optional[float] = 1.0,
         model_name: str = "GRACENew2",
@@ -55,9 +59,21 @@ class GRACENew2(torch.nn.Module):
             model_name (str, optional): Name of the model. Defaults to "GRACE".
         """
         super(GRACENew2, self).__init__(**kwargs)
-        self.encoder_module = encoder_module
+        self.encoder_module = GRACEEncoder(
+            in_channels=num_features,
+            out_channels=hidden,
+            activation=activation,
+            base_model=base_model,
+            k=num_layers,
+        )
         self.tau = tau
-        self.projection_head = projection_head
+        self.lambda_ = lambda_
+
+        self.projection_head = torch.nn.Sequential(
+            torch.nn.Linear(hidden, projection_dim),
+            torch.nn.ELU(),
+            torch.nn.Linear(projection_dim, projection_dim),
+        )
 
         self.augmentor1 = augmentor1
         self.augmentor2 = augmentor2
@@ -89,12 +105,11 @@ class GRACENew2(torch.nn.Module):
         data_view1 = self.augmentor1(data_view1)
         data_view2 = self.augmentor2(data_view2)
         
-        x_1, edge_index_1 = data_view1.x, data_view1.edge_index
-        x_2, edge_index_2 = data_view2.x, data_view2.edge_index
+
 
         ## Generating views
-        z1 = self.forward(x_1, edge_index_1)
-        z2 = self.forward(x_2, edge_index_2)
+        z1 = self.forward(data_view1)
+        z2 = self.forward(data_view2)
         
 
         h1 = z1
@@ -248,7 +263,7 @@ class GRACENew2(torch.nn.Module):
 
         return loss
 
-    def forward(self, x: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
+    def forward(self, data) -> torch.Tensor:
         """
         Compute a forward pass through the encoder module.
 
@@ -259,6 +274,7 @@ class GRACENew2(torch.nn.Module):
         Returns:
             torch.Tensor: Representations from the encoder module.
         """
+        x, edge_index = data.x, data.edge_index
         return self.encoder_module(x, edge_index)
 
     def compute_cosine_sim(self, z1: torch.Tensor, z2: torch.Tensor) -> torch.Tensor:
@@ -316,4 +332,50 @@ class GRACENew2(torch.nn.Module):
                 layer.reset_parameters()
 
 
+class GRACEEncoder(torch.nn.Module):
+    """Implementation of the Encoder for GRACE"""
 
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        activation: Callable = F.relu,
+        base_model=GCNConv,
+        k: int = 2,
+    ) -> None:
+        """
+        Initialize the encoder module.
+
+        Args:
+            in_channels (int): Number of input channels.
+            out_channels (int): Number of output channels.
+            activation (Callable, optional): Activation function. Defaults to F.relu.
+            base_model (torch.nn.Module, optional): Base model. Defaults to GCNConv.
+            k (int, optional): Number of layers. Defaults to 2.
+        """
+        super(GRACEEncoder, self).__init__()
+        self.base_model = base_model
+
+        assert k >= 2, "k needs to be atleast 2"
+        self.k = k
+        self.conv = [base_model(in_channels, 2 * out_channels)]
+        for _ in range(1, k - 1):
+            self.conv.append(base_model(2 * out_channels, 2 * out_channels))
+        self.conv.append(base_model(2 * out_channels, out_channels))
+        self.conv = torch.nn.ModuleList(self.conv)  # type: ignore[assignment]
+        self.activation = activation
+
+    def forward(self, x: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
+        """
+        Compute a forward pass through the encoder module.
+
+        Args:
+            x (torch.Tensor): Node features.
+            edge_index (torch.Tensor): Edge indices.
+
+        Returns:
+            torch.Tensor: Representations from the encoder module.
+        """
+        for i in range(self.k):
+            x = self.activation(self.conv[i](x, edge_index))
+        return x

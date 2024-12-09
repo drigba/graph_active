@@ -60,13 +60,9 @@ class ContrastiveModelWrapper(ModelWrapper):
     def test_step(self, data):
         out = self(data)
         out = out.detach().cpu().numpy()
-        y = data.y.detach().cpu().numpy()
-        train_mask = data.train_mask.detach().cpu().numpy()
-        
         
         if not self.fitted:
-            self.predictor.fit(out[train_mask], y[train_mask])
-            self.fitted = True
+            self._fit_predictor(data,out)
             
         pred_log_probas = self.predict_log_proba(out)
         pred_log_probas = torch.tensor(pred_log_probas).to(data.y.device)
@@ -75,7 +71,12 @@ class ContrastiveModelWrapper(ModelWrapper):
     def predict_log_proba(self,x):
         pred = self.predictor.predict_log_proba(x)
         return pred
-
+    
+    def _fit_predictor(self,data,out):
+        y = data.y.detach().cpu().numpy()
+        train_mask = data.train_mask.detach().cpu().numpy()
+        self.predictor.fit(out[train_mask], y[train_mask])
+        self.fitted = True
 
     def reset_predictor(self):
         self.predictor = LogisticRegression(max_iter=1000)
@@ -87,40 +88,10 @@ class GRACEModelWrapper(ContrastiveModelWrapper):
         super().__init__(model,optimizer,None,None)
 
     def train_step(self, data):
-        loss = self.model.train_step(data.x, data.edge_index)
-        return loss
-    
-    def forward(self, data):
-        out = self.model(data.x, data.edge_index)
-        return out
-    
-class GRACE2ModelWrapper(ContrastiveModelWrapper):
-    def __init__(self, model,optimizer):
-        super().__init__(model,optimizer,None,None)
-
-    def train_step(self, data):
         loss = self.model.train_step(data)
         return loss
     
-    def forward(self, data):
-        out = self.model(data.x, data.edge_index)
-        return out
-    
-    
-class GRACENEWModelWrapper(ContrastiveModelWrapper):
-    def __init__(self, model,optimizer):
-        super().__init__(model,optimizer,None,None)
-
-    def train_step(self, data):
-        labels = label_indices(data)
-        loss = self.model.train_step(data.x, data.edge_index, labels)
-        return loss
-    
-    def forward(self, data):
-        out = self.model(data.x, data.edge_index)
-        return out
-    
-class GRACEModelWrapperCluster(GRACENEWModelWrapper):
+class GRACEModelWrapperCluster(GRACEModelWrapper):
     
     def test_step(self, data):
         out = self(data)
@@ -128,7 +99,6 @@ class GRACEModelWrapperCluster(GRACENEWModelWrapper):
         
         if not self.fitted:
             self._fit_predictor(data,out)
-            self.fitted = True
             
         features = np.hstack([out,self.distances_ ,self.cluster_labels_])    
         pred_log_probas = self.predict_log_proba(features)
@@ -151,6 +121,7 @@ class GRACEModelWrapperCluster(GRACENEWModelWrapper):
 
         features = np.hstack([out,self.distances_ ,self.cluster_labels_])
         self.predictor.fit(features[train_mask], y[train_mask])
+        self.fitted = True
             
     
 
